@@ -1,0 +1,32 @@
+[project]
+name = "example"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Oliver Lambson", email = "oliverlambson@gmail.com" }
+]
+dependencies = [
+    "asyncpg",
+    "asyncpg-stubs",
+]
+readme = "README.md"
+requires-python = ">= 3.12"
+
+[project.scripts]
+"worker" = "worker:entrypoint"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.rye]
+managed = true
+dev-dependencies = [
+    "mypy",
+]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]

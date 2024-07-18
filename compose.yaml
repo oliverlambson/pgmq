@@ -1,0 +1,31 @@
+services:
+  db:
+    build:
+      context: .
+      dockerfile: postgres.Dockerfile
+      tags: ["postgres:16-cron"]
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "pg_isready",
+          "-U",
+          "${POSTGRES_USER:-postgres}",
+          "-d",
+          "${POSTGRES_DB:-postgres}",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+#     volumes:
+#       - "db:/var/lib/postgresql/data"
+#
+# volumes:
+#   db:
