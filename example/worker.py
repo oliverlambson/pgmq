@@ -46,8 +46,73 @@ class MessageArchive(pydantic.BaseModel):
     details: str | None  # TEXT DEFAULT NULL
 
 
-def process_message(message: Any) -> tuple[str, str | None]:
-    logger.info(f"message.message={message}")
+async def delete_message(
+    connection: asyncpg.connection.Connection | asyncpg.pool.PoolConnectionProxy,
+    id_: int,
+) -> None:
+    await connection.execute("DELETE FROM messages.message WHERE id = $1;", id_)
+
+
+async def retrieve_message(
+    connection: asyncpg.connection.Connection | asyncpg.pool.PoolConnectionProxy,
+    id_: int,
+) -> Message | None:
+    row = await connection.fetchrow(
+        """
+        UPDATE messages.message
+        SET lock_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute'
+        WHERE
+            id = $1
+            AND (lock_expires_at IS NULL OR lock_expires_at < CURRENT_TIMESTAMP)
+        RETURNING *;
+        """,
+        id_,
+        record_class=DottableRecord,
+    )
+    if row is None:
+        return None
+    logger.debug("row=%s", row)
+    return Message.model_validate(row, from_attributes=True)
+
+
+async def create_message_archive(
+    connection: asyncpg.connection.Connection | asyncpg.pool.PoolConnectionProxy,
+    message: Message,
+    result: MessageStatus,
+    handled_by: str,
+    details: str | None,
+) -> MessageArchive:
+    row = await connection.fetchrow(
+        """
+        INSERT INTO messages.message_archive (
+            created_at,
+            message,
+            result,
+            handled_by,
+            details
+        )
+        VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5
+        )
+        RETURNING *;
+        """,
+        message.created_at,
+        json.dumps(message.message),
+        result,
+        handled_by,
+        details,
+        record_class=DottableRecord,
+    )
+    assert row is not None, "No row created!"
+    logger.debug("row=%s", row)
+    return MessageArchive.model_validate(row, from_attributes=True)
+
+
+def process_message(message: Any) -> tuple[MessageStatus, str | None]:
     if not isinstance(message, list):
         return "rejected", "invalid message format"
     if len(message) == 0:
@@ -91,21 +156,10 @@ async def callback(
 
     # grab the message
     # - avoid race conditions by using lock_expires_at
-    row = await connection.fetchrow(
-        """
-        UPDATE messages.message
-        SET lock_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute'
-        WHERE
-            id = $1
-            AND (lock_expires_at IS NULL OR lock_expires_at < CURRENT_TIMESTAMP)
-        RETURNING *;
-        """,
-        id_,
-        record_class=DottableRecord,
-    )
-    assert row is not None, "No message retrieved!"
-    logger.debug("row=%s", row)
-    message = Message.model_validate(row, from_attributes=True)
+    message = await retrieve_message(connection, id_)
+    if message is None:
+        logger.info("Could not retrieve message (probably locked)")
+        return
     logger.debug("message=%s", message)
     logger.info(
         f"{message.id=} retrieved: '{message.message}' ({message.lock_expires_at=})"
@@ -114,41 +168,18 @@ async def callback(
     # do work
     assert message.message is not None, "Message is None!"
     result, details = process_message(message.message)
-    handled_by = "worker"
     logger.debug(f"{result=}, {details=}")
     logger.info(f"{message.id=} work complete")
 
     # mark message as handled
     async with connection.transaction():
-        _ = await connection.execute("DELETE FROM messages.message WHERE id = $1;", id_)
-        archive_row = await connection.fetchrow(
-            """
-            INSERT INTO messages.message_archive (
-                created_at,
-                message,
-                result,
-                handled_by,
-                details
-            )
-            VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                $5
-            )
-            RETURNING *;
-            """,
-            message.created_at,
-            json.dumps(message.message),
-            result,
-            handled_by,
-            details,
-            record_class=DottableRecord,
-        )
-        assert archive_row is not None, "No archive row created!"
-        message_archive = MessageArchive.model_validate(
-            archive_row, from_attributes=True
+        await delete_message(connection, message.id)
+        message_archive = await create_message_archive(
+            connection=connection,
+            message=message,
+            result=result,
+            handled_by="worker",
+            details=details,
         )
     logger.info(
         f"message.id={message.id} archived to {message_archive.id=} ({message_archive.result=})"
