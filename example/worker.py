@@ -3,8 +3,8 @@ import json
 import logging
 import os
 import sys
-from datetime import datetime
-from typing import Any, Literal
+from datetime import UTC, datetime, timedelta
+from typing import Any, Literal, NamedTuple
 
 import asyncpg
 import pydantic
@@ -56,17 +56,20 @@ async def delete_message(
 async def retrieve_message(
     connection: asyncpg.connection.Connection | asyncpg.pool.PoolConnectionProxy,
     id_: int,
+    *,
+    lock_duration: timedelta = timedelta(minutes=1),
 ) -> Message | None:
     row = await connection.fetchrow(
         """
         UPDATE messages.message
-        SET lock_expires_at = CURRENT_TIMESTAMP + INTERVAL '1 minute'
+        SET lock_expires_at = CURRENT_TIMESTAMP + $2
         WHERE
             id = $1
             AND (lock_expires_at IS NULL OR lock_expires_at < CURRENT_TIMESTAMP)
         RETURNING *;
         """,
         id_,
+        lock_duration,
         record_class=DottableRecord,
     )
     if row is None:
@@ -112,19 +115,41 @@ async def create_message_archive(
     return MessageArchive.model_validate(row, from_attributes=True)
 
 
-def process_message(message: Any) -> tuple[MessageStatus, str | None]:
-    if not isinstance(message, list):
-        return "rejected", "invalid message format"
-    if len(message) == 0:
-        return "rejected", "no message in list"
-    instruction = message[0]
-    match instruction:
-        case "fail":
-            return "failed", "explicit fail instruction received"
-        case "reject":
-            return "rejected", "explicit reject instruction received"
-        case _:
-            return "success", "fake work was done"
+class ProcessMessageResult(NamedTuple):
+    result: MessageStatus
+    details: str | None
+
+
+async def process_message(
+    message: Any,
+    *,
+    timeout: timedelta,  # just for simulation in testing
+) -> ProcessMessageResult:
+    try:
+        if not isinstance(message, list):
+            return ProcessMessageResult("rejected", "invalid message format")
+        if len(message) == 0:
+            return ProcessMessageResult("rejected", "no message in list")
+        instruction = message[0]
+        match instruction:
+            case "fail":
+                return ProcessMessageResult(
+                    "failed", "explicit fail instruction received"
+                )
+            case "reject":
+                return ProcessMessageResult(
+                    "rejected", "explicit reject instruction received"
+                )
+            case "timeout":
+                await asyncio.sleep(timeout.total_seconds() + 1)
+                raise NotImplementedError("Timeout should have fired, panic!")
+            case "raise":
+                raise ValueError("Explicit raise instruction received")
+            case _:
+                return ProcessMessageResult("success", "fake work was done")
+    except asyncio.CancelledError:
+        logger.info("process_message cancelled")
+        raise
 
 
 async def callback(
@@ -140,6 +165,7 @@ async def callback(
     parameter: channel
     payload: message
     """
+    timeout = timedelta(seconds=1)
 
     # recieve notification
     logger.debug(f"callback=<{connection=}, {pid=}, {parameter=}, {payload=}>")
@@ -156,7 +182,7 @@ async def callback(
 
     # grab the message
     # - avoid race conditions by using lock_expires_at
-    message = await retrieve_message(connection, id_)
+    message = await retrieve_message(connection, id_, lock_duration=timeout)
     if message is None:
         logger.info("Could not retrieve message (probably locked)")
         return
@@ -167,9 +193,25 @@ async def callback(
 
     # do work
     assert message.message is not None, "Message is None!"
-    result, details = process_message(message.message)
-    logger.debug(f"{result=}, {details=}")
-    logger.info(f"{message.id=} work complete")
+    assert message.lock_expires_at is not None, "lock_expires_at not set!"
+    utcnow = datetime.now(UTC).replace(tzinfo=None)
+    timeout_remaining = message.lock_expires_at - utcnow
+    try:
+        if timeout_remaining.total_seconds() < 0:
+            logger.error(f"{timeout_remaining=}, {message.lock_expires_at=}, {utcnow=}")
+            raise asyncio.TimeoutError("Lock expired before work could begin")
+        async with asyncio.timeout(timeout_remaining.total_seconds()):
+            process_result = await process_message(
+                message.message, timeout=timeout_remaining
+            )
+        logger.info(f"{message.id=} work complete")
+    except asyncio.TimeoutError as e:
+        process_result = ProcessMessageResult("failed", "timed out")
+        logger.error(f"{message.id=} timed out", exc_info=e)
+    except Exception as e:
+        process_result = ProcessMessageResult("failed", f"unhandled exception: {e}")
+        logger.error(f"{message.id=} unhandled exception", exc_info=e)
+    logger.debug(f"{process_result.result=}, {process_result=}")
 
     # mark message as handled
     async with connection.transaction():
@@ -177,9 +219,9 @@ async def callback(
         message_archive = await create_message_archive(
             connection=connection,
             message=message,
-            result=result,
+            result=process_result.result,
             handled_by="worker",
-            details=details,
+            details=process_result.details,
         )
     logger.info(
         f"message.id={message.id} archived to {message_archive.id=} ({message_archive.result=})"
