@@ -59,6 +59,11 @@ async def retrieve_message(
     *,
     lock_duration: timedelta = timedelta(minutes=1),
 ) -> Message | None:
+    """
+    avoids race conditions by locking
+    first to set lock_expires_at gets the message
+    returns None if already locked
+    """
     row = await connection.fetchrow(
         """
         UPDATE messages.message
@@ -72,7 +77,7 @@ async def retrieve_message(
         lock_duration,
         record_class=DottableRecord,
     )
-    if row is None:
+    if row is None:  # already locked
         return None
     logger.debug("row=%s", row)
     return Message.model_validate(row, from_attributes=True)
@@ -181,7 +186,6 @@ async def callback(
         ) from e
 
     # grab the message
-    # - avoid race conditions by using lock_expires_at
     message = await retrieve_message(connection, id_, lock_duration=timeout)
     if message is None:
         logger.info("Could not retrieve message (probably locked)")

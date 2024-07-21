@@ -45,7 +45,8 @@ todo:
 - [x] postgres with pg_cron installed
 - [x] tables for messages and message archive
 - [x] notify to channel on insert into messages
-- [ ] handle timed out locks (notify to different channel? move to dead letter table?)
+- [x] handle timed out locks in-app
+- [ ] handle timed out locks in-db (worker fails) - cron?
 - [x] worker to listen for notifies and process messages
 - [ ] cron job to insert into messages
 - [ ] message schema in example
