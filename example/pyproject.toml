@@ -8,6 +8,7 @@ authors = [
 dependencies = [
     "asyncpg",
     "asyncpg-stubs",
+    "pydantic>=2.8.2",
 ]
 readme = "README.md"
 requires-python = ">= 3.12"

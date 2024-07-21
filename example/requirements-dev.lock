@@ -9,6 +9,8 @@
 #   generate-hashes: false
 
 -e file:.
+annotated-types==0.7.0
+    # via pydantic
 asyncpg==0.29.0
     # via asyncpg-stubs
     # via example
@@ -17,6 +19,12 @@ asyncpg-stubs==0.29.1
 mypy==1.11.0
 mypy-extensions==1.0.0
     # via mypy
+pydantic==2.8.2
+    # via example
+pydantic-core==2.20.1
+    # via pydantic
 typing-extensions==4.12.2
     # via asyncpg-stubs
     # via mypy
+    # via pydantic
+    # via pydantic-core

@@ -4,11 +4,19 @@ import logging
 import os
 import sys
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import asyncpg
+import pydantic
 
 logger = logging.getLogger(__name__)
+
+
+class DottableRecord(asyncpg.Record):
+    """Required to access record fields as attributes for Pydantic model_validate."""
+
+    def __getattr__(self, name):
+        return self[name]
 
 
 NewMessageNotifyPayload = int  # message.id
@@ -21,25 +29,24 @@ MessageStatus = (
 )
 
 
-class Message(asyncpg.Record):
+class Message(pydantic.BaseModel):
     id: int  # SERIAL PRIMARY KEY,
     created_at: datetime  # TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    message: str  # JSONB NOT NULL,
+    message: pydantic.Json[Any]  # JSONB NOT NULL,
     lock_expires_at: datetime | None  # TIMESTAMP DEFAULT NULL
 
 
-class MessageArchive(asyncpg.Record):
+class MessageArchive(pydantic.BaseModel):
     id: int  # SERIAL PRIMARY KEY,
     created_at: datetime  # TIMESTAMP NOT NULL,
     archived_at: datetime  # TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    message: str  # JSONB NOT NULL,
+    message: pydantic.Json[Any]  # JSONB NOT NULL,
     result: MessageStatus  # message_status NOT NULL,
     handled_by: str  # VARCHAR(50) NOT NULL,
     details: str | None  # TEXT DEFAULT NULL
 
 
-def process_message(raw_message: str) -> tuple[str, str | None]:
-    message = json.loads(raw_message)
+def process_message(message: Any) -> tuple[str, str | None]:
     logger.info(f"message.message={message}")
     if not isinstance(message, list):
         return "rejected", "invalid message format"
@@ -94,21 +101,22 @@ async def callback(
         RETURNING *;
         """,
         id_,
-        record_class=Message,
+        record_class=DottableRecord,
     )
     assert row is not None, "No message retrieved!"
-    logger.debug(f"{row=}")
+    logger.debug("row=%s", row)
+    message = Message.model_validate(row, from_attributes=True)
+    logger.debug("message=%s", message)
     logger.info(
-        f"message.id={row.get("id")} retrieved: '{row.get("message")}' (lock_expires_at={row.get("lock_expires_at")})"
+        f"{message.id=} retrieved: '{message.message}' ({message.lock_expires_at=})"
     )
 
     # do work
-    raw_message = row.get("message")
-    assert raw_message is not None, "Message is None!"
-    assert isinstance(raw_message, str), "Message is not a string!"
-    result, details = process_message(raw_message)
-    logger.info(f"{result=}, {details=}")
-    logger.info(f"message.id={row.get("id")} work complete")
+    assert message.message is not None, "Message is None!"
+    result, details = process_message(message.message)
+    handled_by = "worker"
+    logger.debug(f"{result=}, {details=}")
+    logger.info(f"{message.id=} work complete")
 
     # mark message as handled
     async with connection.transaction():
@@ -131,16 +139,19 @@ async def callback(
             )
             RETURNING *;
             """,
-            row.get("created_at"),
-            row.get("message"),
+            message.created_at,
+            json.dumps(message.message),
             result,
-            "worker",
+            handled_by,
             details,
-            record_class=MessageArchive,
+            record_class=DottableRecord,
         )
         assert archive_row is not None, "No archive row created!"
+        message_archive = MessageArchive.model_validate(
+            archive_row, from_attributes=True
+        )
     logger.info(
-        f"message.id={row.get("id")} archived to message_archive.id={archive_row.get("id")} (result='{archive_row.get("result")}')"
+        f"message.id={message.id} archived to {message_archive.id=} ({message_archive.result=})"
     )
 
 
