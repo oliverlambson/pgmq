@@ -1,7 +1,7 @@
 [project]
-name = "example"
+name = "pgmq"
 version = "0.1.0"
-description = "Add your description here"
+description = "Postgres backed message queue"
 authors = [
     { name = "Oliver Lambson", email = "oliverlambson@gmail.com" }
 ]
@@ -14,7 +14,7 @@ readme = "README.md"
 requires-python = ">= 3.12"
 
 [project.scripts]
-"worker" = "worker:entrypoint"
+"worker" = "pgmq.worker:entrypoint"
 
 [build-system]
 requires = ["hatchling"]
@@ -30,4 +30,4 @@ dev-dependencies = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["."]
+packages = ["pgmq"]

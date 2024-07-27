@@ -9,11 +9,11 @@ source .venv/bin/activate
 worker
 
 # new shell
-./insert.sh
+scripts/publish-message.sh
 ```
 
 to empty the message & archive table, run:
 
 ```sh
-./clean.sh
+scripts/clean-message-tables.sh
 ```

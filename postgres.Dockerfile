@@ -10,4 +10,4 @@ RUN apt-get update && \
 COPY ./postgresql.conf /usr/share/postgresql/postgresql.conf.sample
 
 # init scripts (*.sh, *.sql)
-COPY ./initdb.d/ /docker-entrypoint-initdb.d/
+COPY ./migrations/ /docker-entrypoint-initdb.d/
