@@ -188,7 +188,7 @@ async def callback(
     # grab the message
     message = await retrieve_message(connection, id_, lock_duration=timeout)
     if message is None:
-        logger.info("Could not retrieve message (probably locked)")
+        logger.info("could not retrieve message (probably locked)")
         return
     logger.debug("message=%s", message)
     logger.info(
@@ -233,13 +233,12 @@ async def callback(
 
 
 async def main() -> None:
-    logger.info("connecting to db")
-    conn = await asyncpg.connect(
-        "postgresql://postgres:postgres@localhost:5432/postgres"
-    )
-    logger.info("adding callback to LISTEN for new_message channel")
+    logger.info("[*] connecting to db")
+    db_url = "postgresql://postgres:postgres@localhost:5432/postgres"
+    conn = await asyncpg.connect(db_url)
+    logger.info("[*] adding callback to LISTEN for new_message channel")
     await conn.add_listener(channel="new_message", callback=callback)
-    logger.info("begin infinite loop")
+    logger.info("[*] begin infinite loop")
     while True:
         await asyncio.sleep(1)
 
@@ -250,7 +249,7 @@ def entrypoint() -> None:
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logging.info("exiting on keyboard interrupt")
+        logging.info("[*] exiting on keyboard interrupt")
         sys.exit(0)
 
 
