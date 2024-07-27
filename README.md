@@ -1,4 +1,80 @@
-# Postgres Message Queue
+# pgmq - a Postgres Message Queue
+
+The core idea is just a set of conventions to use a couple of tables and Postgres'
+`LISTEN`/`NOTIFY` functionality in to create a message queue. We use a table as our queue,
+and every time we `INSERT` a new message into the table, we send a `NOTIFY` to a channel.
+The `NOTIFY` includes the id of the inserted row. Workers `LISTEN` to the channel and
+process the messages.
+
+## FAQ
+
+### What if we have no workers?
+
+No new messages will be processed, and no messages will be lost. They just sit in the
+queue. They won't automatically be processed when a worker comes online because the
+`NOTIFY` is sent when the message is inserted, not when a worker is available.
+
+(You will need to set up a worker to process messages that are in `messages.message` and
+have no lock. You could do this automatically by having a worker that runs by polling
+the message table rather than listening for notifies.)
+
+> TODO:
+>
+> - [ ] Add a cron job that re-sends the notify for messages that are not locked and
+>       have been in the queue for a certain amount of time.
+
+### What if our worker can't process the message (e.g., invalid message)?
+
+The worker should delete the message from the message table and write it to the
+`messages.message_archive` table with the status of `"rejected"`.
+
+### What if our worker has an error processing the message?
+
+The worker should delete the message from the message table and write it to the
+`messages.message_archive` table with the status of `"failed"`.
+
+### What if our worker is still processing the message after the set timeout?
+
+The worker should delete the message from the message table and write it to the
+`messages.message_archive` table with the status of `"lock_expired"`.
+
+### How do we handle unsuccessful messages in the message_archive table?
+
+(You will need to set up a worker to process messages that are in
+`messages.message_archive` table and have a status != `"success"`.)
+
+### What if we have multiple workers?
+
+To process a new message, the worker does not `SELECT` the message from the table. It
+does an `UPDATE ... RETURNING`. If the worker successfully updates the row, it will be
+able to process the message. If the worker fails to update the row, another worker has
+already locked the message and is processing it.
+
+### What if our worker goes down while processing a message?
+
+In the `UPDATE ... RETURNING` statement used to retrieve the message, the worker sets a
+value for `lock_expires_at`. If the worker goes down, the lock will eventually expire,
+at which point another worker is allowed to process the message.
+
+> TODO:
+>
+> - [ ] Add a cron job that deletes timed-out messages and writes them to the
+>       `messages.message_archive` table with the status of `"lock_expired"`.
+
+### Why not use `SELECT ... FOR UPDATE`?
+
+We could use `SELECT ... FOR UPDATE [NOWAIT / SKIP LOCKED]` to lock the row. However,
+in long-running transactions we'd be holding the lock for the entire duration to process
+the message. Setting the `lock_expires_at` on the row using `UPDATE ... RETURNING` means
+we have short transactions and can easily detect when the lock has expired.
+
+### How do we do scheduled messages?
+
+Use the `pg_cron` extension to schedule messages to be inserted into the message table.
+
+---
+
+## Design notes
 
 > tldr;
 >
