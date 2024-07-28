@@ -54,12 +54,8 @@ already locked the message and is processing it.
 
 In the `UPDATE ... RETURNING` statement used to retrieve the message, the worker sets a
 value for `lock_expires_at`. If the worker goes down, the lock will eventually expire,
-at which point another worker is allowed to process the message.
-
-> TODO:
->
-> - [ ] Add a cron job that deletes timed-out messages and writes them to the
->       `messages.message_archive` table with the status of `"lock_expired"`.
+at which point it will be deleted from the message table and written to the archive
+table, marked as `"lock_expired"`.
 
 ### Why not use `SELECT ... FOR UPDATE`?
 

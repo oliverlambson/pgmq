@@ -50,3 +50,36 @@ AFTER INSERT ON messages.message_archive
 FOR EACH ROW
 WHEN (NEW.result != 'success')
 EXECUTE FUNCTION dead_message_nofify();
+
+CREATE OR REPLACE FUNCTION expired_lock_cleanup() RETURNS void AS $$
+BEGIN
+    BEGIN
+        -- Insert expired messages into the archive table
+        INSERT INTO messages.message_archive (created_at, message, result, handled_by)
+        SELECT
+            created_at,
+            message,
+            'lock_expired'::message_status,
+            'pg_cron.expired_lock_cleanup' AS handled_by
+        FROM
+            messages.message
+        WHERE
+            lock_expires_at < NOW();
+
+        -- Delete expired messages from the original table
+        DELETE FROM messages.message
+        WHERE
+            lock_expires_at < NOW();
+    EXCEPTION
+        WHEN OTHERS THEN
+            ROLLBACK;
+            RAISE;
+    END;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT cron.schedule(
+    'messages.message:expired_lock_cleanup',
+    '* * * * *',
+    $$ SELECT expired_lock_cleanup(); $$
+);
