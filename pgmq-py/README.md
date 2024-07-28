@@ -1,4 +1,4 @@
-# Example usage of pgmq
+# Example implmentation of pgmq
 
 ```sh
 # install deps
@@ -9,7 +9,7 @@ source .venv/bin/activate
 example/worker.py
 
 # new shell
-example/publish-message.sh
+example/publish-message.sh test
 ```
 
 to empty the message & archive table, run:
