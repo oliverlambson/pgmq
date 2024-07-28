@@ -58,6 +58,54 @@ we have short transactions and can easily detect when the lock has expired.
 
 Use the `pg_cron` extension to schedule messages to be inserted into the message table.
 
+## Architecture
+
+```mermaid
+sequenceDiagram
+    participant Publisher
+    participant Worker
+    participant AdhocWorker
+    participant `messages.message`
+    participant `messages.message_archive`
+    participant Cron
+    participant `new_message`
+    participant `dead_message`
+
+    Publisher->>`messages.message`: INSERT new message
+    `messages.message`->>`new_message`: (insert trigger) NOTIFY with message id
+    `messages.message_archive`->>`dead_message`: (insert trigger when result != "success") NOTIFY with message id
+    Worker->>`new_message`: LISTEN
+    `new_message`->>Worker: message id
+    Worker->>`messages.message`: UPDATE ... RETURNING to lock message
+    alt Successful lock
+        Worker->>Worker: Process message
+        alt
+            Worker->>`messages.message`: DELETE message
+            Worker->>`messages.message_archive`: INSERT message with status "success"
+        else Invalid message
+            Worker->>`messages.message`: DELETE message
+            Worker->>`messages.message_archive`: INSERT message with status "rejected"
+        else Error processing message
+            Worker->>`messages.message`: DELETE message
+            Worker->>`messages.message_archive`: INSERT message with status "failed"
+        else Lock expired
+            Worker->>`messages.message`: DELETE message
+            Worker->>`messages.message_archive`: INSERT message with status "lock_expired"
+        else Worker dies
+            Cron->>Cron: (every minute) Check for messages with expired locks
+            Cron->>`messages.message`: DELETE message
+            Cron->>`messages.message_archive`: INSERT message with status "lock_expired"
+        end
+    else Failed to lock
+        Worker->>Worker: Another worker is processing the message
+    end
+
+    Cron->>Cron: (every minute) Check for unprocessed messages
+    Cron->>`new_message`: Re-send NOTIFY for unprocessed messages
+
+    AdhocWorker->>`messages.message_archive`: Process messages with status != "success"
+```
+
 ---
 
 ## Design notes
