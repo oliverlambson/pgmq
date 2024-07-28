@@ -35,3 +35,18 @@ CREATE TRIGGER new_message_trigger
 AFTER INSERT ON messages.message
 FOR EACH ROW
 EXECUTE FUNCTION new_message_nofify();
+
+CREATE OR REPLACE FUNCTION dead_message_nofify() RETURNS trigger AS $$
+BEGIN
+    RAISE WARNING 'Error: messages.message_archive.id=% has result=%', NEW.id, NEW.result;
+    -- TODO: use this for alerting
+    PERFORM pg_notify('dead_message', NEW.id::TEXT);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER dead_message_trigger
+AFTER INSERT ON messages.message_archive
+FOR EACH ROW
+WHEN (NEW.result != 'success')
+EXECUTE FUNCTION dead_message_nofify();
