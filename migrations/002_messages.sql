@@ -24,8 +24,6 @@ CREATE TABLE IF NOT EXISTS messages.message_archive (
     details TEXT DEFAULT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_lock_expires_at ON messages.message (lock_expires_at);
-
 CREATE OR REPLACE FUNCTION new_message_nofify() RETURNS trigger AS $$
 BEGIN
     PERFORM pg_notify('new_message', NEW.id::TEXT);
