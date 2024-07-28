@@ -11,17 +11,7 @@ process the messages.
 ### What if we have no workers?
 
 No new messages will be processed, and no messages will be lost. They just sit in the
-queue. They won't automatically be processed when a worker comes online because the
-`NOTIFY` is sent when the message is inserted, not when a worker is available.
-
-(You will need to set up a worker to process messages that are in `messages.message` and
-have no lock. You could do this automatically by having a worker that runs by polling
-the message table rather than listening for notifies.)
-
-> TODO:
->
-> - [ ] Add a cron job that re-sends the notify for messages that are not locked and
->       have been in the queue for a certain amount of time.
+queue. The notify will be re-sent every minute until a worker processes the message.
 
 ### What if our worker can't process the message (e.g., invalid message)?
 

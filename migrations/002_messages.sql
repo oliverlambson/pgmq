@@ -83,3 +83,23 @@ SELECT cron.schedule(
     '* * * * *',
     $$ SELECT expired_lock_cleanup(); $$
 );
+
+CREATE OR REPLACE FUNCTION non_locked_notify() RETURNS void AS $$
+DECLARE
+    message RECORD;
+BEGIN
+    FOR message IN
+        SELECT id FROM messages.message
+        WHERE lock_expires_at IS NULL
+          AND date_trunc('minute', created_at) < date_trunc('minute', now())
+    LOOP
+        PERFORM pg_notify('new_message', message.id::TEXT);
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+SELECT cron.schedule(
+    'messages.message:non_locked_notify',
+    '* * * * *',
+    $$ SELECT non_locked_notify(); $$
+);
