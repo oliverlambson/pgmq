@@ -60,24 +60,44 @@ async def retrieve_message(
     avoids race conditions by locking
     first to set lock_expires_at gets the message
     returns None if already locked
+
+    "locked" can either be:
+    - row is currently locked by postgres (another db client has the lock)
+    - row is not locked at the postgres-level, but lock_expires_at is set to a future time
     """
-    row = await connection.fetchrow(
-        """
-        UPDATE messages.message
-        SET lock_expires_at = CURRENT_TIMESTAMP + $2
-        WHERE
-            id = $1
-            AND (lock_expires_at IS NULL OR lock_expires_at < CURRENT_TIMESTAMP)
-        RETURNING *;
-        """,
-        id_,
-        lock_duration,
-        record_class=DottableRecord,
-    )
-    if row is None:  # already locked
-        return None
-    logger.debug("row=%s", row)
-    return Message.model_validate(row, from_attributes=True)
+    async with connection.transaction():
+        try:  # avoid deadlocks by failing fast if lock is not available
+            _ = await connection.fetchrow(
+                """
+                SELECT 1
+                FROM messages.message
+                WHERE id = $1
+                FOR UPDATE NOWAIT;
+                """,
+                id_,
+            )
+        except asyncpg.exceptions.LockNotAvailableError:
+            logger.debug("message.id=%s LockNotAvailable", id_)
+            return None
+
+        row = await connection.fetchrow(
+            """
+            UPDATE messages.message
+            SET lock_expires_at = CURRENT_TIMESTAMP + $2
+            WHERE
+                id = $1
+                AND (lock_expires_at IS NULL OR lock_expires_at < CURRENT_TIMESTAMP)
+            RETURNING *;
+            """,
+            id_,
+            lock_duration,
+            record_class=DottableRecord,
+        )
+        if row is None:  # already locked
+            logger.debug("message.id=%s lock_expires_at probably set", id_)
+            return None
+        logger.debug("row=%s", row)
+        return Message.model_validate(row, from_attributes=True)
 
 
 async def create_message_archive(
