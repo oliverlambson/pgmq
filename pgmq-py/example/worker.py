@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 from datetime import UTC, datetime, timedelta
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, NoReturn
 
 import asyncpg
 
@@ -132,15 +132,16 @@ async def callback(
     )
 
 
-async def main() -> None:
+async def main() -> NoReturn:
     logger.info("[*] connecting to db")
     db_url = "postgresql://postgres:postgres@localhost:5432/postgres"
     conn = await asyncpg.connect(db_url)
     logger.info("[*] adding callback to LISTEN for new_message channel")
     await conn.add_listener(channel="new_message", callback=callback)
-    logger.info("[*] begin infinite loop")
-    while True:
-        await asyncio.sleep(1)
+    logger.info("[*] waiting for messages")
+    event = asyncio.Event()
+    await event.wait()
+    raise NotImplementedError("Finished main. Should never reach this point. (panic!)")
 
 
 def entrypoint() -> None:
