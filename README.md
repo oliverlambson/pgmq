@@ -203,6 +203,7 @@ We use this to:
   - [x] notify to channel on insert into message
   - [x] notify to channel on insert into message_archive if unsuccessful
   - [x] handle timed out locks in-db (worker fails) - cron?
+  - [ ] separate `message_dead` table
 - [ ] example implementation in Python
   - [x] handle timed out locks in-app
   - [x] worker to listen for notifies and process messages
